@@ -1,0 +1,74 @@
+name: 4D code scanning
+description: Analyze repository-relative 4D sources and upload complete SARIF to GitHub.
+inputs:
+  config:
+    description: Optional configuration path relative to the checked-out repository root.
+    required: false
+    default: ""
+  category:
+    description: Stable, unique code-scanning category for this analysis scope.
+    required: false
+    default: sonar-4d
+  native-tool:
+    description: Optional absolute tool4d executable path on a compatible, trusted runner.
+    required: false
+    default: ""
+  project:
+    description: .4DProject path relative to the repository root; required with native-tool.
+    required: false
+    default: ""
+  native-timeout:
+    description: Native observation deadline in seconds.
+    required: false
+    default: "15"
+outputs:
+  sarif-file:
+    description: Complete SARIF report path on the runner.
+    value: ${{ steps.analyze.outputs.sarif-file }}
+  analysis-file:
+    description: Common analysis report path on the runner.
+    value: ${{ steps.analyze.outputs.analysis-file }}
+  sarif-id:
+    description: GitHub's uploaded SARIF identifier.
+    value: ${{ steps.upload.outputs.sarif-id }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Analyze 4D sources
+      id: analyze
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        SONAR4D_CONFIG: ${{ inputs.config }}
+        SONAR4D_NATIVE_TOOL: ${{ inputs.native-tool }}
+        SONAR4D_PROJECT: ${{ inputs.project }}
+        SONAR4D_NATIVE_TIMEOUT: ${{ inputs.native-timeout }}
+      run: |
+        report_parent="$(mktemp -d "$RUNNER_TEMP/sonar4d.XXXXXX")"
+        report_dir="$report_parent/report"
+        args=("$GITHUB_WORKSPACE" --output "$report_dir")
+        if [[ -n "$SONAR4D_CONFIG" ]]; then
+          args+=(--config "$GITHUB_WORKSPACE/$SONAR4D_CONFIG")
+        fi
+        if [[ -n "$SONAR4D_NATIVE_TOOL" ]]; then
+          args+=(--native-tool "$SONAR4D_NATIVE_TOOL")
+        fi
+        if [[ -n "$SONAR4D_PROJECT" ]]; then
+          args+=(--project "$SONAR4D_PROJECT")
+        fi
+        args+=(--native-timeout "$SONAR4D_NATIVE_TIMEOUT")
+        python -m sonar4d.ci "${args[@]}"
+        echo "sarif-file=$report_dir/findings.sarif" >> "$GITHUB_OUTPUT"
+        echo "analysis-file=$report_dir/analysis.json" >> "$GITHUB_OUTPUT"
+    - name: Upload complete SARIF
+      id: upload
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.analyze.outputs.sarif-file }}
+        checkout_path: ${{ github.workspace }}
+        category: ${{ inputs.category }}
+        wait-for-processing: "true"

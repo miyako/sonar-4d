@@ -1,0 +1,47 @@
+name: GitHub code-scanning fixture
+
+on:
+  push:
+    branches-ignore: [main]
+    paths:
+      - action.yml
+      - sonar4d/**
+      - scripts/verify_code_scanning.py
+      - tests/fixtures/**
+      - .github/sonar4d-fixture.json
+      - .github/workflows/code-scanning-fixture.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./
+        id: analyze
+        with:
+          config: .github/sonar4d-fixture.json
+          category: sonar-4d-fixture
+      - name: Verify processed analysis and source-mapped alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SARIF_ID: ${{ steps.analyze.outputs.sarif-id }}
+        run: |
+          python scripts/verify_code_scanning.py \
+            --sarif-id "$SARIF_ID" \
+            --output "$RUNNER_TEMP/sonar4d-github-evidence.json"
+      - name: Preserve verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar4d-github-evidence
+          path: ${{ runner.temp }}/sonar4d-github-evidence.json
+          if-no-files-found: error

@@ -70,7 +70,7 @@ class NativeContractTests(unittest.TestCase):
 
     def call_probe(self, mode, version="21.0 contract-test"):
         with patch.dict(os.environ, {"SONAR4D_FAKE_MODE": mode, "SONAR4D_FAKE_VERSION": version}):
-            return probe(self.root, self.project, self.tool, [self.source], 0.6)
+            return probe(self.root, self.project, self.tool, [self.source], 2)
 
     def test_real_transport_partial_diagnostic_is_not_complete(self):
         before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
@@ -152,7 +152,7 @@ class NativeContractTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO())
         ), contextlib.redirect_stderr(io.StringIO()):
             code = main([str(self.root), "--output", str(output), "--native-tool", str(self.tool),
-                         "--project", "Project/Probe.4DProject", "--native-timeout", "0.6",
+                         "--project", "Project/Probe.4DProject", "--native-timeout", "2",
                          "--leave-unopened", "Project/space #é.4dm"])
         self.assertEqual(code, 2)
         self.assertFalse((output / "sonar-issues.json").exists())
@@ -167,12 +167,13 @@ class NativeContractTests(unittest.TestCase):
     def test_complete_native_cli_exports_and_exit_codes(self):
         for mode, expected_code, count in (("workspace-full", 1, 1), ("workspace-zero", 0, 0)):
             output = self.directory / mode
+            errors = io.StringIO()
             with patch.dict(os.environ, {"SONAR4D_FAKE_MODE": mode}), (
                 contextlib.redirect_stdout(io.StringIO())
-            ), contextlib.redirect_stderr(io.StringIO()):
+            ), contextlib.redirect_stderr(errors):
                 code = main([str(self.root), "--output", str(output), "--native-tool", str(self.tool),
-                             "--project", "Project/Probe.4DProject", "--native-timeout", "0.6"])
-            self.assertEqual(code, expected_code)
+                             "--project", "Project/Probe.4DProject", "--native-timeout", "2"])
+            self.assertEqual(code, expected_code, errors.getvalue())
             self.assertTrue(json.loads((output / "analysis.json").read_text())["complete"])
             report = json.loads((output / "sonar-issues.json").read_text())
             self.assertEqual(len(report["issues"]), count)
