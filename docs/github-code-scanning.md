@@ -96,6 +96,16 @@ in the `sonar4d-github-evidence` workflow artifact and alert links are written
 to the job summary. The verifier is fixture-specific, not required in consumer
 workflows. Unit contracts also cover negative verification cases.
 
+The live upload was verified on 2026-11-11 in
+[fixture workflow run 43032734486](https://github.com/miyako/sonar-4d/actions/runs/43032734486).
+GitHub completed analysis `2144284763` for commit
+`a65320a1f1b85579d91bf4aa916f7cb9f9c15cfa`, with exactly two open alerts:
+[the ordinary path](https://github.com/miyako/sonar-4d/security/code-scanning/2)
+and [the space/Unicode/fragment-character path](https://github.com/miyako/sonar-4d/security/code-scanning/1),
+both mapped to line 1. This is a feature-branch fixture verification, not a
+claim that the default branch contains vulnerabilities or that native Mac
+analysis ran in GitHub Actions.
+
 ## Native checks in GitHub Actions
 
 Custom analysis works on GitHub's Ubuntu runners. Native analysis still
