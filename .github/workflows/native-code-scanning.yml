@@ -1,0 +1,115 @@
+name: Hosted native 4D code scanning
+
+on:
+  push:
+    branches-ignore: [main]
+    paths:
+      - action.yml
+      - sonar4d/**
+      - scripts/verify_code_scanning.py
+      - tests/fixtures/**
+      - tests/test_provision.py
+      - .github/sonar4d-native-*.json
+      - .github/workflows/native-code-scanning.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: errors
+            project: tests/fixtures/native/Project/Probe.4DProject
+            unopened: |
+              tests/fixtures/native/Project/Sources/Methods/Unopened.4dm
+              tests/fixtures/native/Project/Sources/Methods/Callee.4dm
+          - fixture: clean
+            project: tests/fixtures/native-clean/Project/Clean.4DProject
+            unopened: ""
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Analyze with public tool4d
+        id: analyze
+        uses: ./
+        with:
+          download-tool4d: "true"
+          project: ${{ matrix.project }}
+          config: .github/sonar4d-native-${{ matrix.fixture }}.json
+          leave-unopened: ${{ matrix.unopened }}
+          native-timeout: "60"
+          category: sonar-4d-native-${{ matrix.fixture }}
+      - name: Verify native diagnostics and GitHub processing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SARIF_ID: ${{ steps.analyze.outputs.sarif-id }}
+          ANALYSIS_FILE: ${{ steps.analyze.outputs.analysis-file }}
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          python -m scripts.verify_code_scanning \
+            --sarif-id "$SARIF_ID" \
+            --analysis-file "$ANALYSIS_FILE" \
+            --native-fixture "$FIXTURE" \
+            --output "$RUNNER_TEMP/native-github-evidence.json"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-github-evidence-${{ matrix.fixture }}
+          path: ${{ runner.temp }}/native-github-evidence.json
+          if-no-files-found: error
+  missing-dependency:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Provision public tool4d
+        run: python -m sonar4d.provision --destination "$RUNNER_TEMP/tool4d-runtime"
+      - name: Require genuine dependency failure, not a clean scan
+        run: |
+          status=0
+          python -m sonar4d . \
+            --config .github/sonar4d-native-missing.json \
+            --native-tool "$RUNNER_TEMP/tool4d-runtime/tool4d.app/Contents/MacOS/tool4d" \
+            --project tests/fixtures/missing-dependency/Project/MissingDependency.4DProject \
+            --native-timeout 60 \
+            --output "$RUNNER_TEMP/missing-dependency-report" || status=$?
+          if [[ "$status" != 2 ]]; then
+            echo "::error::Missing dependency must produce incomplete analysis (exit 2)"
+            exit 1
+          fi
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "missing-dependency-report"
+          report = json.loads((root / "analysis.json").read_text())
+          assert report["complete"] is False
+          assert report["errors"] == ["Declared 4D dependencies are not validated by this foundation"]
+          assert not (root / "sonar-issues.json").exists()
+          assert len(report["findings"]) == 1
+          finding = report["findings"][0]
+          assert finding["start_line"] == 2 and finding["rule_id"] == "4D-N001"
+          assert "cs.AbsentComponent is unknown" in finding["message"]
+          print("Actual missing-component diagnostic preserved; no successful import report generated.")
+          PY
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-missing-dependency-evidence
+          path: ${{ runner.temp }}/missing-dependency-report/analysis.json
+          if-no-files-found: error

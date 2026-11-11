@@ -7,8 +7,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.verify_code_scanning import EXPECTED_PATHS, verify
+from scripts.verify_code_scanning import EXPECTED_PATHS, verify, verify_native_fixture, verify_report
 from sonar4d import ci
+from sonar4d.provision import RUNTIME_VERSION
 
 
 class CiTests(unittest.TestCase):
@@ -67,6 +68,14 @@ class GitHubVerificationTests(unittest.TestCase):
             }
             for index, path in enumerate(sorted(EXPECTED_PATHS), 1)
         ]
+        self.report = {"complete": True, "errors": [], "findings": []}
+        for index, alert in enumerate(self.alerts):
+            instance = alert["most_recent_instance"]
+            instance["message"] = {"text": f"diagnostic {index}"}
+            self.report["findings"].append({
+                "path": instance["location"]["path"], "start_line": 1,
+                "rule_id": "4D-M001", "message": instance["message"]["text"],
+            })
 
     def verify(self, processing=None, analyses=None, alerts=None):
         return verify(
@@ -118,6 +127,91 @@ class GitHubVerificationTests(unittest.TestCase):
                 self.verify(alerts=alerts)
         with self.assertRaises(ValueError):
             self.verify(alerts=self.alerts + [self.alerts[0]])
+
+    def check_report(self, alerts=None, report=None, analysis=None):
+        return verify_report(
+            {"processing_status": "complete"}, [self.analysis if analysis is None else analysis],
+            self.alerts if alerts is None else alerts,
+            "upload-1", "refs/heads/example", "abc", self.report if report is None else report,
+        )
+
+    def test_report_verifier_preserves_multiple_messages_on_one_source_line(self):
+        path = self.report["findings"][0]["path"]
+        self.report["findings"][1]["path"] = path
+        self.alerts[1]["most_recent_instance"]["location"]["path"] = path
+        self.assertEqual(len(self.check_report()["alerts"]), 2)
+
+    def test_report_verifier_rejects_missing_duplicate_wrong_and_incomplete_results(self):
+        for alerts in ([], self.alerts[:1], self.alerts + [self.alerts[0]]):
+            with self.assertRaises(ValueError):
+                self.check_report(alerts=alerts)
+        for update in ("message", "rule", "line", "state"):
+            alerts = deepcopy(self.alerts)
+            if update == "message":
+                alerts[0]["most_recent_instance"]["message"]["text"] = "different"
+            elif update == "rule":
+                alerts[0]["rule"]["id"] = "different"
+            elif update == "line":
+                alerts[0]["most_recent_instance"]["location"]["start_line"] = 2
+            else:
+                alerts[0]["state"] = "fixed"
+            with self.subTest(update=update), self.assertRaises(ValueError):
+                self.check_report(alerts=alerts)
+        for report in ({**self.report, "complete": False}, {**self.report, "errors": ["failure"]}):
+            with self.assertRaises(ValueError):
+                self.check_report(report=report)
+
+    def test_empty_report_requires_zero_processed_results_and_no_current_alerts(self):
+        report = {"complete": True, "errors": [], "findings": []}
+        analysis = {**self.analysis, "results_count": 0}
+        self.assertEqual(self.check_report(alerts=[], report=report, analysis=analysis)["alerts"], [])
+        with self.assertRaises(ValueError):
+            self.check_report(report=report, analysis=analysis)
+        with self.assertRaises(ValueError):
+            self.check_report(alerts=[], report=report)
+
+
+class NativeFixtureVerificationTests(unittest.TestCase):
+    def setUp(self):
+        prefix = "tests/fixtures/native/Project/Sources/Methods/"
+        self.report = {
+            "backends": ["custom", "tool4d-syntax"],
+            "findings": [
+                {"path": prefix + file, "start_line": line, "rule_id": "4D-N001", "message": message}
+                for file, line, message in [
+                    ("Caller.4dm", 2, "Impossible to cast Text to Integer."),
+                    ("Opened.4dm", 3, "Missing expression"), ("Opened.4dm", 3, "if without end if"),
+                    ("Unopened.4dm", 2, "Missing expression"), ("Unopened.4dm", 2, "if without end if"),
+                ]
+            ],
+        }
+        self.observation = {
+            "complete": True, "version": RUNTIME_VERSION,
+            "opened": [prefix + "Opened.4dm", prefix + "Caller.4dm"],
+        }
+
+    def test_exact_native_errors_and_clean_scope(self):
+        verify_native_fixture(self.report, self.observation, "errors")
+        verify_native_fixture(
+            {"backends": ["tool4d-syntax"], "findings": [],
+             "scope": ["tests/fixtures/native-clean/Project/Sources/Methods/Clean.4dm"]},
+            self.observation, "clean",
+        )
+
+    def test_shifted_missing_errors_wrong_build_and_accidentally_opened_files_fail(self):
+        report = deepcopy(self.report)
+        report["findings"][0]["start_line"] = 1
+        for changed in (report, {**self.report, "findings": self.report["findings"][:-1]},
+                        {**self.report, "backends": ["custom"]}):
+            with self.assertRaises(ValueError):
+                verify_native_fixture(changed, self.observation, "errors")
+        for observation in (
+            {**self.observation, "complete": False},
+            {**self.observation, "version": "21 R3 build 21R3.100164"},
+            {**self.observation, "opened": self.observation["opened"] + ["Unopened.4dm"]},
+        ):
+            with self.assertRaises(ValueError):
+                verify_native_fixture(self.report, observation, "errors")
 
 
 if __name__ == "__main__":
