@@ -192,6 +192,11 @@ tests and repository-scoped CLI runs returned all five correctly located
 findings, the complete empty clean report, and the same fail-closed
 missing-dependency diagnostic. This validates the newer build's bounded
 fixture behavior, not a general fix for the older runtime's intermittent crash.
+The same downloaded build subsequently passed the error, clean and
+missing-dependency contracts on GitHub-hosted `macos-15`; GitHub processed all
+five native alerts and the separate empty upload. The
+[hosted run and exact analysis/alert evidence](github-code-scanning.md#hosted-native-fixture-workflow)
+are recorded separately from these local observations.
 
 The deadline applies to TCP startup/observation after version probing and
 copying; version probing has its own bounded timeout and process cleanup may

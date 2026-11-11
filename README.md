@@ -9,7 +9,7 @@ This is **not a complete compiler analyzer or a security product**.
 | Custom rule `4D-M001` | Configurable physical source-file length limit; maintainability only |
 | Common findings model | Repository-relative paths; one-based lines, zero-based UTF-16 columns |
 | SARIF 2.1.0 | Deterministic findings, GitHub-compatible relative URIs, explicit failed invocation on incomplete analysis |
-| GitHub code scanning | Reusable upload action, automatic custom-rule workflow, and custom/native fixture verification workflows |
+| GitHub code scanning | Reusable action, opt-in public tool4d download, and live-verified custom/native hosted workflows |
 | Sonar generic JSON | Current rules/issues format; correct CODE_SMELL/MAINTAINABILITY and BUG/RELIABILITY mappings |
 | Native SonarQube Java plugin | Registers `fourd` / `.4dm`; built and unit/packaging tested, not server-deployment tested |
 | tool4d backend | Response-bound workspace syntax checking on verified tool4d 21.0 builds 21.100301 and 21.100422, macOS ARM64; other builds/dependencies fail closed |
