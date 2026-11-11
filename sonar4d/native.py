@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlsplit
 from .model import native_findings
 
 
-VERIFIED_BUILDS = {"21.0 build 21.100301"}
+VERIFIED_BUILDS = {"21.0 build 21.100301", "21.0 build 21.100422"}
 VERIFIED_PLATFORM = sys.platform == "darwin" and platform.machine() == "arm64"
 
 class NativeError(Exception):

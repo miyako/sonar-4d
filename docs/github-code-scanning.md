@@ -31,8 +31,10 @@ Optional inputs:
 | `config` | JSON configuration path relative to the checked-out repository root |
 | `category` | Stable, unique analysis identity; defaults to `sonar-4d` |
 | `native-tool` | Optional tool4d executable already installed on the runner |
-| `project` | Repository-relative `.4DProject`, required with `native-tool` |
+| `download-tool4d` | `"true"` downloads/verifies the pinned public tool4d on macOS ARM64; defaults to `"false"` |
+| `project` | Repository-relative `.4DProject`, required with either native mode |
 | `native-timeout` | Native observation deadline, default 15 seconds |
+| `leave-unopened` | Optional newline-separated repository-relative source paths for native coverage experiments |
 
 Outputs are `sarif-file`, `analysis-file` (runner-local absolute paths) and
 `sarif-id` (GitHub's upload identifier). Reports use a fresh directory beneath
@@ -102,31 +104,134 @@ GitHub completed analysis `2144284763` for commit
 `a65320a1f1b85579d91bf4aa916f7cb9f9c15cfa`, with exactly two open alerts:
 [the ordinary path](https://github.com/miyako/sonar-4d/security/code-scanning/2)
 and [the space/Unicode/fragment-character path](https://github.com/miyako/sonar-4d/security/code-scanning/1),
-both mapped to line 1. This is a feature-branch fixture verification, not a
-claim that the default branch contains vulnerabilities or that native Mac
-analysis ran in GitHub Actions.
+both mapped to line 1. This is a feature-branch custom fixture verification,
+not a claim that the default branch contains vulnerabilities. The independent
+native Mac verification is recorded below.
 
 ## Native checks in GitHub Actions
 
-Custom analysis works on GitHub's Ubuntu runners. Native analysis still
-requires the supported tool4d executable on a compatible Apple Silicon Mac
-runner. This action does **not** download tool4d, install a runner service or
-provision licenses. Hosted Ubuntu does not become a native 4D runner simply
-because it can upload SARIF.
+Custom analysis works on GitHub's Ubuntu runners. Native syntax checking uses
+the verified macOS ARM64 runtime. **tool4d can be downloaded publicly without
+login, secrets or license activation**; neither manual installation nor a
+self-hosted Mac is required. GitHub's explicit `macos-15` label supplies an
+Apple Silicon hosted runner; `macos-15-intel` is a different architecture.
 
-On an appropriately provisioned **trusted** runner, add `native-tool` and
-`project`, and use a separate category such as `sonar-4d-native`. Keep the
-repository-root source scope consistent with the chosen project; exclude
-unrelated projects through config or the full-response coverage check will
-correctly fail incomplete.
+For a trusted project, use this native job instead of the Ubuntu-only example:
 
-Native build/platform restrictions, dependency blockers, R3 coordinate limits
-and the intermittent tool4d version-command crash still apply. The live
-GitHub fixture workflow exercises custom analysis, not a native Mac runner.
-Native job provisioning remains separate from the verified upload mechanism.
+```yaml
+name: Native 4D code scanning
+on: [push, workflow_dispatch]
+jobs:
+  analyze:
+    runs-on: macos-15
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: miyako/sonar-4d@main # Pin a reviewed commit SHA for production.
+        with:
+          download-tool4d: "true"
+          project: Project/YourProject.4DProject
+          # config: .github/sonar4d.json
+          native-timeout: "60"
+          category: sonar-4d-native
+```
+
+Alternatively, supply `native-tool` for an already installed, verified
+executable. `native-tool` and `download-tool4d: "true"` are mutually exclusive.
+Both require `project`. Keep the repository-root source scope consistent with
+that project: exclude unrelated projects through config, or full-response
+coverage will correctly fail incomplete. Native diagnostics and enabled custom
+rules are both included. Download mode remains opt-in.
+
+### Public download verification
+
+The separate `python -m sonar4d.provision --destination NEW_DIRECTORY` helper
+uses the public [tool4d download convention](https://github.com/miyako/skills/blob/main/4d-skills/skills/4dcli/SKILL.md#obtaining-tool4d).
+It downloads only this reviewed runtime:
+
+| Pin | Value |
+|---|---|
+| URL | `https://resources-download.4d.com/release/21.x/21.0/latest/mac/tool4d_arm64.tar.xz` |
+| SHA-256 | `4a7ef4b26091bf77761956f9b939c83f441902ce77c25952e0eda18a36497b07` |
+| CLI version | `21.0 build 21.100422` |
+| Apple signing team / identifier | `37UG5W39Z2` / `com.4D.tool` |
+
+This is a repository-reviewed digest of the officially signed download, **not
+a claim that 4D publishes that checksum**. Because the URL contains `latest`,
+an upstream replacement intentionally fails the digest check. Review its
+signature, build and real fixture behavior before updating pins; never simply
+accept whatever `latest` returns.
+
+Downloads are HTTPS-only, bounded and do not load curl configuration or send
+authentication. HTTP success alone is insufficient: this service can return
+an HTML redirect stub instead of an archive. Digest checking precedes safe,
+bounded extraction, deep/strict Apple signature verification with the expected
+4D identity, and an exact version check. Unsupported hosts, drift, malformed
+archives, signature/version failures and timeouts fail visibly before scanning.
+There is no retry, quarantine removal, re-signing or success-shaped fallback.
+The helper installs only into a fresh requested directory and records
+`provision.json`; the action uses `RUNNER_TEMP`, not global application folders.
+An optional `--archive FILE` accepts a cached archive under the same checks.
+The helper requires macOS ARM64, Python with safe tar data filters
+(the action supplies Python 3.12), `curl` and `codesign`.
+
+Public Linux/Windows archives exist too; this implementation does not
+automatically install them because their native completion/location contract
+has not been verified. This is a validation limit, not a login requirement.
+
+### Hosted native fixture workflow
+
+`.github/workflows/native-code-scanning.yml` runs relevant feature-branch
+pushes and manual dispatch, not a default-branch quality policy. Fresh hosted
+Mac jobs download the public runtime independently. The error scope requires
+five `4D-N001` findings, including the cross-file type mismatch and syntax
+errors in a file deliberately never opened with LSP `didOpen`. The clean
+scope requires an explicit complete empty report. Separate categories
+`sonar-4d-native-errors` and `sonar-4d-native-clean` prevent scope replacement.
+
+After uploading, the verifier compares every alert's rule, path, physical
+line and message with the complete report, including different diagnostics on
+the same line. It verifies the exact processed upload/commit/ref and known
+native fixture expectations. A third job requires the actual missing-component
+diagnostic, exit `2`, incomplete status and no Sonar report; it never uploads
+that partial SARIF. Evidence is retained as workflow artifacts.
+
+The complete hosted path was verified on 2026-11-11 in
+[native workflow run 43036548494](https://github.com/miyako/sonar-4d/actions/runs/43036548494),
+at commit `b21c128f5ae7807bc570fc52778ec0c16f9210b4`. All three jobs passed
+after downloading and verifying the pinned public runtime on `macos-15`:
+
+| Scope | Verified outcome | GitHub analysis |
+|---|---|---|
+| Native errors | Complete, five source-mapped `4D-N001` alerts | `2144457239` |
+| Native clean | Complete, zero findings, processed empty SARIF | `2144457696` |
+| Missing dependency | Incomplete, real unknown-component finding at line 2, exit `2`, no Sonar report or upload | None by design |
+
+GitHub preserved the distinct messages sharing a physical source line:
+[Caller line 2](https://github.com/miyako/sonar-4d/security/code-scanning/3),
+[Opened line 3, missing expression](https://github.com/miyako/sonar-4d/security/code-scanning/4),
+[Opened line 3, unmatched If](https://github.com/miyako/sonar-4d/security/code-scanning/5),
+[Unopened line 2, missing expression](https://github.com/miyako/sonar-4d/security/code-scanning/6)
+and [Unopened line 2, unmatched If](https://github.com/miyako/sonar-4d/security/code-scanning/7).
+These are intentional reliability fixtures on the feature branch, not security
+vulnerabilities. The native evidence artifacts retain exact SARIF IDs,
+analysis IDs, commit/ref and source locations; the job also verifies that the
+unopened methods were not sent `didOpen`.
+
+Native build/platform restrictions, dependency blockers and R3 coordinate
+limits still apply. The older `21.100301` version-command crash remains
+documented; successful newer-build fixtures do not prove it cannot recur.
 Never expose a persistent self-hosted Mac or credentials to untrusted fork
-pull requests. Dataless/skip-startup and copying are not a security sandbox.
+pull requests. Disposable hosted runners reduce persistence risks, but
+dataless/skip-startup and copying are **not a security sandbox**.
 
 ## Official reference
 
 [Uploading third-party SARIF to GitHub](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/integrate-with-existing-tools/upload-sarif-file)
+
+[GitHub-hosted runner labels and architectures](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)

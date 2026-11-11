@@ -9,10 +9,10 @@ This is **not a complete compiler analyzer or a security product**.
 | Custom rule `4D-M001` | Configurable physical source-file length limit; maintainability only |
 | Common findings model | Repository-relative paths; one-based lines, zero-based UTF-16 columns |
 | SARIF 2.1.0 | Deterministic findings, GitHub-compatible relative URIs, explicit failed invocation on incomplete analysis |
-| GitHub code scanning | Reusable upload action, automatic custom-rule workflow, and live fixture verification workflow |
+| GitHub code scanning | Reusable action, opt-in public tool4d download, and live-verified custom/native hosted workflows |
 | Sonar generic JSON | Current rules/issues format; correct CODE_SMELL/MAINTAINABILITY and BUG/RELIABILITY mappings |
 | Native SonarQube Java plugin | Registers `fourd` / `.4dm`; built and unit/packaging tested, not server-deployment tested |
-| tool4d backend | Working response-bound workspace syntax checking on pinned tool4d 21.0 build 21.100301; other builds/dependencies fail closed |
+| tool4d backend | Response-bound workspace syntax checking on verified tool4d 21.0 builds 21.100301 and 21.100422, macOS ARM64; other builds/dependencies fail closed |
 
 ## Run the working analyzer
 
@@ -87,21 +87,38 @@ at the output path requested for that run.
 
 ## Native tool4d observation
 
-Requires an explicitly supplied **tool4d executable**, not an `.app` folder.
-Native completion and location mapping are verified for **21.0 build
-21.100301 on macOS ARM64 only**. Other builds/platforms may be observed, but remain incomplete and
+The CLI accepts an explicitly supplied **tool4d executable**, not an `.app`
+folder. tool4d is publicly downloadable **without login or license activation**.
+The optional provisioner downloads and verifies **21.0 build 21.100422**;
+GitHub Actions can do this automatically on a hosted `macos-15` ARM64 runner.
+A self-hosted Mac and manual installation are not required.
+
+Native completion and location mapping are verified for **21.0 builds
+21.100301 and 21.100422 on macOS ARM64 only**. Other builds/platforms may be observed, but remain incomplete and
 their raw diagnostics are not promoted to common findings.
-No automatic download, credential use or dependency fetching is implemented.
-Repeated native launches also exposed an intermittent **SIGSEGV in tool4d
-21.0's own `--version` command** on this host. That is a real runtime failure,
+Public Linux/Windows downloads also exist, but those native backends are not
+verified here. Project dependency fetching is not implemented.
+Repeated native launches exposed an intermittent **SIGSEGV in tool4d
+21.0 build 21.100301's own `--version` command** on this host. That is a real runtime failure,
 not a clean scan: it exits `2`, preserves the error and withholds Sonar output.
-No automatic retry hides it. Native integration runs can fail for this reason;
-this build is a proof-of-concept baseline, not a production reliability claim.
+No automatic retry hides it. The newer downloaded build passed the native
+fixtures; that does not establish that runtime instability is fixed.
+
+```sh
+# From this checkout on macOS ARM64; destination must be new.
+python3 -m sonar4d.provision --destination /tmp/sonar4d-tool-001
+# Executable: /tmp/sonar4d-tool-001/tool4d.app/Contents/MacOS/tool4d
+```
+
+The provisioner verifies a repository-pinned SHA-256, Apple's code-signature
+chain/4D team identity and the exact runtime version before installation.
+It never removes quarantine, re-signs binaries or installs globally.
+See [download pins and native Actions setup](docs/github-code-scanning.md#native-checks-in-github-actions).
 
 ```sh
 python3 -m sonar4d tests/fixtures/native \
   --project Project/Probe.4DProject \
-  --native-tool /Applications/tool4d/21/100301/tool4d.app/Contents/MacOS/tool4d \
+  --native-tool /tmp/sonar4d-tool-001/tool4d.app/Contents/MacOS/tool4d \
   --native-timeout 15 \
   --leave-unopened Project/Sources/Methods/Unopened.4dm \
   --leave-unopened Project/Sources/Methods/Callee.4dm \
@@ -142,8 +159,9 @@ tool4d process. **These flags and a copy are not a security sandbox.** Native
 plugins/components, OS preferences and the process environment remain risks.
 Use trusted projects and dependencies; analyze untrusted projects only in an
 OS-isolated disposable account/container/VM without credentials or network
-access. The analyzer itself has no upload or dependency-download path. Protect
-reports as source-derived data.
+access. The analyzer itself has no upload or dependency-download path.
+The separate optional provisioner retrieves only the public pinned runtime;
+it does not transmit project source. Protect reports as source-derived data.
 
 ## SonarQube Server integration
 
@@ -212,7 +230,9 @@ jobs:
 
 Pin the action to a reviewed commit SHA for production. The default runs
 only the configurable maintainability rule; it does not install tool4d or
-perform security detection. See [GitHub setup, native-runner requirements,
+perform security detection. For native checks use `runs-on: macos-15`,
+`download-tool4d: "true"` and a repository-relative `project` input.
+See [GitHub setup, native download requirements,
 exit behavior and the live fixture check](docs/github-code-scanning.md).
 
 `findings.sarif` uses repository-relative percent-encoded artifact URIs,
@@ -252,7 +272,9 @@ cross-file/unopened diagnostics, source locations and clean response coverage.
 SARIF complete/incomplete and
 empty/nonempty variants have also been validated against the published
 SARIF 2.1.0 JSON schema. CI runs Python contracts and Java verification without
-requiring proprietary tool4d.
+requiring tool4d. The separate hosted-native workflow downloads the public
+runtime without credentials and checks errors, a genuinely clean response,
+and fail-closed missing-dependency behavior.
 
 ## Scope and next direction
 

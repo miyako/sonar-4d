@@ -13,14 +13,22 @@ inputs:
     description: Optional absolute tool4d executable path on a compatible, trusted runner.
     required: false
     default: ""
+  download-tool4d:
+    description: Download and verify the pinned public runtime on macOS ARM64; no login or activation.
+    required: false
+    default: "false"
   project:
-    description: .4DProject path relative to the repository root; required with native-tool.
+    description: .4DProject path relative to the repository root; required for either native mode.
     required: false
     default: ""
   native-timeout:
     description: Native observation deadline in seconds.
     required: false
     default: "15"
+  leave-unopened:
+    description: Optional newline-separated repository-relative sources for native unopened-file experiments.
+    required: false
+    default: ""
 outputs:
   sarif-file:
     description: Complete SARIF report path on the runner.
@@ -34,19 +42,55 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Validate native mode
+      shell: bash
+      env:
+        DOWNLOAD_TOOL4D: ${{ inputs.download-tool4d }}
+        NATIVE_TOOL: ${{ inputs.native-tool }}
+        PROJECT: ${{ inputs.project }}
+        LEAVE_UNOPENED: ${{ inputs.leave-unopened }}
+      run: |
+        case "$DOWNLOAD_TOOL4D" in
+          true|false) ;;
+          *) echo "::error::download-tool4d must be true or false"; exit 2 ;;
+        esac
+        if [[ "$DOWNLOAD_TOOL4D" == true && -n "$NATIVE_TOOL" ]]; then
+          echo "::error::Choose download-tool4d or native-tool, not both"
+          exit 2
+        fi
+        native=false
+        if [[ "$DOWNLOAD_TOOL4D" == true || -n "$NATIVE_TOOL" ]]; then native=true; fi
+        if [[ "$native" == true && -z "$PROJECT" ]]; then
+          echo "::error::Native analysis requires a project"
+          exit 2
+        fi
+        if [[ "$native" == false && ( -n "$PROJECT" || -n "$LEAVE_UNOPENED" ) ]]; then
+          echo "::error::project and leave-unopened require native analysis"
+          exit 2
+        fi
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
         python-version: "3.12"
+    - name: Provision public tool4d
+      id: provision
+      if: inputs.download-tool4d == 'true'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        runtime_parent="$(mktemp -d "$RUNNER_TEMP/sonar4d-tool.XXXXXX")"
+        python -m sonar4d.provision --destination "$runtime_parent/runtime"
+        echo "tool-path=$runtime_parent/runtime/tool4d.app/Contents/MacOS/tool4d" >> "$GITHUB_OUTPUT"
     - name: Analyze 4D sources
       id: analyze
       shell: bash
       working-directory: ${{ github.action_path }}
       env:
         SONAR4D_CONFIG: ${{ inputs.config }}
-        SONAR4D_NATIVE_TOOL: ${{ inputs.native-tool }}
+        SONAR4D_NATIVE_TOOL: ${{ steps.provision.outputs.tool-path || inputs.native-tool }}
         SONAR4D_PROJECT: ${{ inputs.project }}
         SONAR4D_NATIVE_TIMEOUT: ${{ inputs.native-timeout }}
+        SONAR4D_LEAVE_UNOPENED: ${{ inputs.leave-unopened }}
       run: |
         report_parent="$(mktemp -d "$RUNNER_TEMP/sonar4d.XXXXXX")"
         report_dir="$report_parent/report"
@@ -61,6 +105,9 @@ runs:
           args+=(--project "$SONAR4D_PROJECT")
         fi
         args+=(--native-timeout "$SONAR4D_NATIVE_TIMEOUT")
+        while IFS= read -r source; do
+          if [[ -n "$source" ]]; then args+=(--leave-unopened "$source"); fi
+        done <<< "$SONAR4D_LEAVE_UNOPENED"
         python -m sonar4d.ci "${args[@]}"
         echo "sarif-file=$report_dir/findings.sarif" >> "$GITHUB_OUTPUT"
         echo "analysis-file=$report_dir/analysis.json" >> "$GITHUB_OUTPUT"

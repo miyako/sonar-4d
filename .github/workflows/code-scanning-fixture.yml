@@ -36,7 +36,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SARIF_ID: ${{ steps.analyze.outputs.sarif-id }}
         run: |
-          python scripts/verify_code_scanning.py \
+          python -m scripts.verify_code_scanning \
             --sarif-id "$SARIF_ID" \
             --output "$RUNNER_TEMP/sonar4d-github-evidence.json"
       - name: Preserve verification evidence

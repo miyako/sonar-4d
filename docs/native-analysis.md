@@ -2,8 +2,11 @@
 
 ## Current supported contract
 
-The working native syntax backend is pinned to **tool4d 21.0 build
-21.100301 on macOS ARM64**. It uses the official custom `experimental/checkSyntax` workspace
+The working native syntax backend accepts **tool4d 21.0 builds
+21.100301 and 21.100422 on macOS ARM64**. The public download provisioner pins
+`21.100422`; no login or activation is needed. See
+[public download verification and hosted Actions](github-code-scanning.md#public-download-verification).
+It uses the official custom `experimental/checkSyntax` workspace
 response, not standard `workspace/diagnostic` or an LSP quiet period.
 Completion requires a valid full document report for **every selected file**,
 valid locations, no duplicate reports, and no unvalidated declared,
@@ -48,9 +51,10 @@ Observed locally on macOS/Apple Silicon on 2026-11-11:
 | tool4d CLI version | LSP serverInfo |
 |---|---|
 | `21.0 build 21.100301` | `4D LSP Server`, version `2100` |
+| `21.0 build 21.100422` (public, signed ARM64 archive) | `4D LSP Server`, version `2100` |
 | `21 R3 build 21R3.100164` | `4D LSP Server`, version `2130` |
 
-Both servers advertise `diagnosticProvider` with
+These builds advertise `diagnosticProvider` with
 `interFileDependencies: true`, `workspaceDiagnostics: false`, and
 `textDocumentSync` with `openClose: true`, `change: 2`, `save: true`,
 `willSave: true`. No alternate position encoding was returned, so the LSP
@@ -172,15 +176,27 @@ The runner checks `tool4d --version` under a timeout and refuses unparseable
 versions and major versions below 21. Tests cover a reported 20.6 version,
 missing executable, early exit, initialization error, malformed framing,
 disconnect, foreign diagnostic URI, no connection, null response and deadline.
-Only the two exact versions above were exercised with actual tool4d; Windows,
+Only the three exact versions above were exercised with actual tool4d; Windows,
 Linux, other 4D versions and real missing runtime libraries are unverified.
 
-Repeated launches on this host also exposed an intermittent SIGSEGV in the
-21.0 `--version` command itself. The runner records that actual failure and
+Repeated launches on this host exposed an intermittent SIGSEGV in the
+21.0 build 21.100301 `--version` command itself. The runner records that actual failure and
 returns incomplete/exit `2`; it does not retry or pretend the project is clean.
 The failed observations were retained separately from successful native
 fixture runs. This proprietary-runtime instability can fail the optional
 native integration tests and remains an explicit production-readiness gap.
+
+The publicly downloaded `21.100422` archive passed SHA-256 and deep/strict
+4D signing-identity verification before execution. Its local integration
+tests and repository-scoped CLI runs returned all five correctly located
+findings, the complete empty clean report, and the same fail-closed
+missing-dependency diagnostic. This validates the newer build's bounded
+fixture behavior, not a general fix for the older runtime's intermittent crash.
+The same downloaded build subsequently passed the error, clean and
+missing-dependency contracts on GitHub-hosted `macos-15`; GitHub processed all
+five native alerts and the separate empty upload. The
+[hosted run and exact analysis/alert evidence](github-code-scanning.md#hosted-native-fixture-workflow)
+are recorded separately from these local observations.
 
 The deadline applies to TCP startup/observation after version probing and
 copying; version probing has its own bounded timeout and process cleanup may
