@@ -9,6 +9,7 @@ This is **not a complete compiler analyzer or a security product**.
 | Custom rule `4D-M001` | Configurable physical source-file length limit; maintainability only |
 | Common findings model | Repository-relative paths; one-based lines, zero-based UTF-16 columns |
 | SARIF 2.1.0 | Deterministic findings, GitHub-compatible relative URIs, explicit failed invocation on incomplete analysis |
+| GitHub code scanning | Reusable upload action, automatic custom-rule workflow, and live fixture verification workflow |
 | Sonar generic JSON | Current rules/issues format; correct CODE_SMELL/MAINTAINABILITY and BUG/RELIABILITY mappings |
 | Native SonarQube Java plugin | Registers `fourd` / `.4dm`; built and unit/packaging tested, not server-deployment tested |
 | tool4d backend | Working response-bound workspace syntax checking on pinned tool4d 21.0 build 21.100301; other builds/dependencies fail closed |
@@ -186,13 +187,43 @@ files as another language to imply support.
 
 ## GitHub code scanning
 
+No SonarQube server is needed. The reusable action analyzes the checked-out
+repository and uploads complete SARIF through GitHub's official uploader:
+
+```yaml
+name: 4D code scanning
+on: [push, pull_request]
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: miyako/sonar-4d@main
+        with:
+          category: sonar-4d
+          # config: .github/sonar4d.json
+```
+
+Pin the action to a reviewed commit SHA for production. The default runs
+only the configurable maintainability rule; it does not install tool4d or
+perform security detection. See [GitHub setup, native-runner requirements,
+exit behavior and the live fixture check](docs/github-code-scanning.md).
+
 `findings.sarif` uses repository-relative percent-encoded artifact URIs,
-UTF-16 column semantics and one-based SARIF columns. Upload it with your
-normal GitHub SARIF workflow only after accepting the source-derived report
-disclosure and checking the analyzer's exit code. Exit `1` means findings and
-should still allow a complete report to be uploaded; exit `2` must not be
-treated as a successful clean analysis. No upload is performed by this CLI,
-and live GitHub code-scanning ingestion has not been exercised.
+UTF-16 column semantics and one-based SARIF columns. The action always analyzes
+the **repository root**, so nested project paths map to the files GitHub knows.
+It accepts complete analyses with findings (normal CLI exit `1`) but fails on
+incomplete analysis (`2`) **before upload**, preserving previous alerts instead
+of replacing them with a false clean result. A successful upload is not a
+zero-findings assertion. The standalone analyzer still has no upload behavior;
+using the action deliberately shares the source-derived report with GitHub.
+`github/codeql-action/upload-sarif` is only an uploader here, not a CodeQL backend.
 
 ## Architecture and verification
 
