@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
 from . import __version__
+from .dependencies import TOKEN_ENV
 from .model import native_findings
 from .native import NativeError, VERIFIED_BUILDS, VERIFIED_PLATFORM, probe
 from .reports import sarif, sonar_generic
@@ -27,6 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--native-timeout", type=float, default=15)
     parser.add_argument("--leave-unopened", action="append", default=[],
                         help="Root-relative source path not sent didOpen (still receives pull request)")
+    parser.add_argument("--no-dependencies", action="store_true",
+                        help="Do not install declared dependencies; a project that declares any is incomplete")
+    parser.add_argument("--offline-dependencies", action="store_true",
+                        help="Install dependencies from verified archives only, without network access")
     args = parser.parse_args(argv)
     output = args.output.resolve()
     try:
@@ -37,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--native-tool and --project must be supplied together")
         if args.leave_unopened and not args.native_tool:
             raise ValueError("--leave-unopened requires --native-tool")
+        if (args.no_dependencies or args.offline_dependencies) and not args.native_tool:
+            raise ValueError("Dependency options require --native-tool")
+        if args.no_dependencies and args.offline_dependencies:
+            raise ValueError("Choose --no-dependencies or --offline-dependencies, not both")
         if output == root or root in output.parents:
             raise ValueError("Report directory must be outside the analyzed root")
         if output.exists():
@@ -60,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
                 root, project, args.native_tool.resolve(),
                 [p for p in paths if p.relative_to(root).as_posix() not in args.leave_unopened],
                 args.native_timeout, scope=paths,
+                dependency_options=None if args.no_dependencies else {
+                    "offline": args.offline_dependencies, "token": os.environ.get(TOKEN_ENV) or None,
+                },
             )
             if not native["complete"]:
                 errors.append(native["reason"])

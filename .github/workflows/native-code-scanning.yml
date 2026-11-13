@@ -99,7 +99,7 @@ jobs:
           root = Path(os.environ["RUNNER_TEMP"]) / "missing-dependency-report"
           report = json.loads((root / "analysis.json").read_text())
           assert report["complete"] is False
-          assert report["errors"] == ["Declared 4D dependencies are not validated by this foundation"]
+          assert report["errors"] == ["Declared 4D dependencies are incomplete: AbsentComponent: local dependencies are not installed by sonar-4d"]
           assert not (root / "sonar-issues.json").exists()
           assert len(report["findings"]) == 1
           finding = report["findings"][0]
@@ -112,4 +112,51 @@ jobs:
         with:
           name: native-missing-dependency-evidence
           path: ${{ runner.temp }}/missing-dependency-report/analysis.json
+          if-no-files-found: error
+
+  github-dependencies:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Provision public tool4d
+        run: python -m sonar4d.provision --destination "$RUNNER_TEMP/tool4d-runtime"
+      - name: Install GitHub dependencies, then reuse them offline
+        env:
+          SONAR4D_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          for mode in online offline; do
+            flags=()
+            if [[ "$mode" == offline ]]; then flags=(--offline-dependencies); unset SONAR4D_GITHUB_TOKEN; fi
+            python -m sonar4d.ci . "${flags[@]}" \
+              --config .github/sonar4d-native-dependencies.json \
+              --native-tool "$RUNNER_TEMP/tool4d-runtime/tool4d.app/Contents/MacOS/tool4d" \
+              --project tests/fixtures/github-dependencies/Project/GitHubDependencies.4DProject \
+              --native-timeout 60 \
+              --output "$RUNNER_TEMP/dependencies-$mode"
+            MODE="$mode" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / f"dependencies-{os.environ['MODE']}"
+          report = json.loads((root / "analysis.json").read_text())
+          assert report["complete"] is True, report["errors"]
+          assert not [f for f in report["findings"] if f["rule_id"].startswith("4D-N")], report["findings"]
+          summary = json.loads((root / "native-observation.json").read_text())["dependencies"]
+          assert summary["installed"] == ["4D SVG"], summary
+          if os.environ["MODE"] == "offline":
+              assert summary["reuse"] == {"4D SVG": "verified archive"}, summary
+          print(json.dumps(summary))
+          PY
+          done
+          test ! -e tests/fixtures/github-dependencies/Project/Components
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-github-dependencies-evidence
+          path: ${{ runner.temp }}/dependencies-*/native-observation.json
           if-no-files-found: error

@@ -223,6 +223,10 @@ vulnerabilities. The native evidence artifacts retain exact SARIF IDs,
 analysis IDs, commit/ref and source locations; the job also verifies that the
 unopened methods were not sent `didOpen`.
 
+That run predates dependency installation; the missing-dependency job now
+expects the `local dependencies are not installed` reason, and a
+`github-dependencies` job checks online and offline GitHub installation.
+
 Native build/platform restrictions, dependency blockers and R3 coordinate
 limits still apply. The older `21.100301` version-command crash remains
 documented; successful newer-build fixtures do not prove it cannot recur.

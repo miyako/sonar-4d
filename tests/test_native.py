@@ -11,6 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from sonar4d import dependencies
 from sonar4d.cli import main
 from sonar4d.model import native_findings
 from sonar4d.native import NativeError, Wire, probe
@@ -117,6 +118,110 @@ class NativeContractTests(unittest.TestCase):
         result = self.call_probe("workspace-full")
         self.assertFalse(result["complete"])
         self.assertIn("dependencies are not validated", result["reason"])
+
+    def fake_dependencies(self, report, code=0):
+        log = self.directory / "dependencies-log.json"
+        environment = patch.dict(os.environ, {"SONAR4D_FAKE_DEPENDENCIES": json.dumps(report),
+                                              "SONAR4D_FAKE_DEPENDENCIES_EXIT": str(code),
+                                              "SONAR4D_FAKE_DEPENDENCIES_LOG": str(log),
+                                              "GITHUB_OUTPUT": str(self.directory / "github-output"),
+                                              "DEPENDENCIES_GITHUB_TOKEN": "ambient"})
+        environment.start()
+        self.addCleanup(environment.stop)
+        cache = patch("sonar4d.dependencies.cache_directory", return_value=self.directory / "sonar4d-cache")
+        cache.start()
+        self.addCleanup(cache.stop)
+        return Path(__file__).parent / "helpers/fake_dependencies.py", log
+
+    def cached_package(self, name):
+        folder = self.directory / "cache" / name
+        (folder / "Project").mkdir(parents=True)
+        (folder / "Project" / f"{name}.4DProject").write_text("{}")
+        return str(folder)
+
+    def test_install_copies_resolved_packages_and_keeps_existing_components(self):
+        script, log = self.fake_dependencies({
+            "resolved": {"A": "1.0.0"}, "incomplete": [], "dependencies": {
+                "A": {"source": "github", "path": self.cached_package("A"), "reuse": "verified archive"},
+                "B": {"source": "github", "path": self.cached_package("B"), "overloadedBy": "Components"}}})
+        package = self.directory / "package"
+        package.mkdir()
+        summary, blocker = dependencies.install(package, "21.0 contract-test", self.directory, token="secret",
+                                                script=script)
+        self.assertIsNone(blocker)
+        self.assertTrue((package / "Components/A.4dbase/Project/A.4DProject").is_file())
+        self.assertFalse((package / "Components/B.4dbase").exists())
+        self.assertEqual((summary["installed"], summary["providedByComponents"]), (["A"], ["B"]))
+        self.assertNotIn("secret", json.dumps(summary))
+        invocation = json.loads(log.read_text())
+        self.assertEqual(invocation["token"], "secret")
+        self.assertFalse(invocation["githubOutput"])
+        self.assertEqual(invocation["argv"][invocation["argv"].index("--runtime-version") + 1], "21.0")
+        (package / "other").mkdir()
+        dependencies.install(package / "other", "21.0 contract-test", self.directory, script=script)
+        self.assertIsNone(json.loads(log.read_text())["token"])
+
+    def test_lock_is_kept_per_project_for_offline_runs(self):
+        script, log = self.fake_dependencies({"incomplete": [], "dependencies": {}})
+        packages = [self.directory / f"lock{index}" for index in range(3)]
+        for package in packages:
+            package.mkdir()
+        with patch.dict(os.environ, {"SONAR4D_FAKE_DEPENDENCIES_LOCK": '{"dependencies":{"A":{"tag":"1.2"}}}'}):
+            dependencies.install(packages[0], "21.0 contract-test", self.directory, script=script, lock_key="/p")
+        self.assertIsNone(json.loads(log.read_text())["lock"])
+        dependencies.install(packages[1], "21.0 contract-test", self.directory, script=script, lock_key="/p",
+                             offline=True)
+        self.assertIn('"1.2"', json.loads(log.read_text())["lock"])
+        dependencies.install(packages[2], "21.0 contract-test", self.directory, script=script, lock_key="/other")
+        self.assertIsNone(json.loads(log.read_text())["lock"])
+
+    def test_install_blockers(self):
+        cases = (({"incomplete": [{"name": "A", "reason": "no release"}], "dependencies": {}}, 3, "A: no release"),
+                 ({"incomplete": [], "dependencies": {"L": {"source": "local", "path": None}}}, 0,
+                  "L: local dependencies"),
+                 ({"incomplete": [], "dependencies": {"M": {"source": "github", "path": None}}}, 0,
+                  "M: not installed"),
+                 ({}, 2, "Dependency resolution failed: fetch_dependencies: usage error"))
+        for index, (report, code, reason) in enumerate(cases):
+            with self.subTest(reason=reason):
+                script, _ = self.fake_dependencies(report, code)
+                package = self.directory / f"package{index}"
+                package.mkdir()
+                _, blocker = dependencies.install(package, "21.0 contract-test", self.directory, script=script)
+                self.assertIn(reason, blocker)
+
+    def test_script_pin_mismatch_is_rejected(self):
+        cache = self.directory / "script-cache"
+        with patch("sonar4d.dependencies.cache_directory", return_value=cache), \
+             patch("sonar4d.dependencies.urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b"tampered"
+            with self.assertRaises(dependencies.DependencyError):
+                dependencies.script_path()
+        self.assertFalse(any(cache.rglob("*.py")))
+
+    def test_probe_installs_declared_dependencies(self):
+        sources = self.root / "Project/Sources"
+        sources.mkdir()
+        (sources / "dependencies.json").write_text('{"dependencies":{"A":{"github":"o/A"}}}')
+        script, log = self.fake_dependencies({"resolved": {"A": "1.0.0"}, "incomplete": [], "dependencies": {
+            "A": {"source": "github", "path": self.cached_package("A"), "reuse": "downloaded"}}})
+        with patch.dict(os.environ, {"SONAR4D_FAKE_MODE": "workspace-full",
+                                     "SONAR4D_FAKE_VERSION": "21.0 contract-test"}):
+            result = probe(self.root, self.project, self.tool, [self.source], 2,
+                           dependency_options={"script": script})
+        self.assertTrue(result["complete"], result["reason"])
+        self.assertEqual(result["dependencies"]["installed"], ["A"])
+        package = Path(json.loads(log.read_text())["argv"][2])
+        self.assertNotEqual(package, self.root)
+        self.assertFalse((self.root / "Components").exists())
+        (sources / "dependencies.json").write_text('{"dependencies":{"L":{}}}')
+        self.fake_dependencies({"incomplete": [], "dependencies": {"L": {"source": "local", "path": None}}})
+        with patch.dict(os.environ, {"SONAR4D_FAKE_MODE": "workspace-full",
+                                     "SONAR4D_FAKE_VERSION": "21.0 contract-test"}):
+            result = probe(self.root, self.project, self.tool, [self.source], 2,
+                           dependency_options={"script": script})
+        self.assertFalse(result["complete"])
+        self.assertIn("L: local dependencies", result["reason"])
 
     def test_failure_modes(self):
         for mode, reason in (("exit", "exited"), ("no-connect", "deadline"),

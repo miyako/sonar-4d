@@ -29,6 +29,18 @@ inputs:
     description: Optional newline-separated repository-relative sources for native unopened-file experiments.
     required: false
     default: ""
+  dependencies:
+    description: >-
+      Native mode only. "install" (default) resolves dependencies.json GitHub components into the
+      analysis copy; "offline" reuses verified archives only; "none" leaves declared dependencies incomplete.
+    required: false
+    default: install
+  github-token:
+    description: >-
+      Optional token for GitHub dependency releases (private repositories and rate limits).
+      Use a fine-grained read-only token; it is passed only to the pinned dependency script.
+    required: false
+    default: ""
 outputs:
   sarif-file:
     description: Complete SARIF report path on the runner.
@@ -49,7 +61,12 @@ runs:
         NATIVE_TOOL: ${{ inputs.native-tool }}
         PROJECT: ${{ inputs.project }}
         LEAVE_UNOPENED: ${{ inputs.leave-unopened }}
+        DEPENDENCIES: ${{ inputs.dependencies }}
       run: |
+        case "$DEPENDENCIES" in
+          install|offline|none) ;;
+          *) echo "::error::dependencies must be install, offline or none"; exit 2 ;;
+        esac
         case "$DOWNLOAD_TOOL4D" in
           true|false) ;;
           *) echo "::error::download-tool4d must be true or false"; exit 2 ;;
@@ -91,6 +108,8 @@ runs:
         SONAR4D_PROJECT: ${{ inputs.project }}
         SONAR4D_NATIVE_TIMEOUT: ${{ inputs.native-timeout }}
         SONAR4D_LEAVE_UNOPENED: ${{ inputs.leave-unopened }}
+        SONAR4D_DEPENDENCIES: ${{ inputs.dependencies }}
+        SONAR4D_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         report_parent="$(mktemp -d "$RUNNER_TEMP/sonar4d.XXXXXX")"
         report_dir="$report_parent/report"
@@ -103,6 +122,10 @@ runs:
         fi
         if [[ -n "$SONAR4D_PROJECT" ]]; then
           args+=(--project "$SONAR4D_PROJECT")
+          case "$SONAR4D_DEPENDENCIES" in
+            offline) args+=(--offline-dependencies) ;;
+            none) args+=(--no-dependencies) ;;
+          esac
         fi
         args+=(--native-timeout "$SONAR4D_NATIVE_TIMEOUT")
         while IFS= read -r source; do

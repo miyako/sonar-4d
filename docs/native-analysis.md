@@ -9,8 +9,9 @@ The working native syntax backend accepts **tool4d 21.0 builds
 It uses the official custom `experimental/checkSyntax` workspace
 response, not standard `workspace/diagnostic` or an LSP quiet period.
 Completion requires a valid full document report for **every selected file**,
-valid locations, no duplicate reports, and no unvalidated declared,
-component or native-plugin dependencies. A missing file, null workspace
+valid locations, no duplicate reports, every declared dependency installed
+(see [Component dependencies](../README.md#component-dependencies)) and no
+native-plugin dependencies. A missing file, null workspace
 response, unsupported build or deadline is incomplete, exits `2`, and cannot
 produce a Sonar generic report.
 
@@ -151,11 +152,20 @@ remain raw evidence and never become a synthetic clean result.
 `tests/fixtures/missing-dependency` declares a deliberately absent local
 component in `dependencies.json` and references it from a method. Use the same
 CLI with `--project Project/MissingDependency.4DProject` and a fresh output path.
-Dependency fetching is disabled; the contract server tests verify that an
-explicit fetch request becomes a failure. The foundation does **not** resolve,
-certify or automatically install dependencies. Native behavior for an absent
-dependency is not yet a supported diagnostic contract, even if the server
-reports that component preparation is done.
+tool4d's own dependency fetching stays disabled; the contract server tests
+verify that an explicit fetch request becomes a failure. sonar-4d instead
+installs resolved GitHub dependencies into the analysis copy's `Components`
+folder before tool4d starts, because tool4d 21.0 in language-server mode
+ignores the dependency cache but loads `Components/` (observed locally on
+build 21.100422: an `SVG_CLEAR` call is flagged as a syntax error without
+4D SVG and accepted once it is installed). The local dependency in this fixture
+cannot be installed, so the run reports
+`Declared 4D dependencies are incomplete: AbsentComponent: local dependencies are not installed by sonar-4d`.
+`tests/fixtures/github-dependencies` is the positive counterpart: the hosted
+workflow installs 4D SVG from GitHub, then repeats the run offline from the
+verified archive store. Native behavior for an absent dependency is still not a
+supported diagnostic contract, even if the server reports that component
+preparation is done.
 
 A historical eight-second R3 run before canonical URI resolution returned
 `valid:true`, a component-install-done notification, `filesStatus:[]` and null
@@ -166,7 +176,7 @@ components exist or that the project was checked.
 
 A final canonical-path run on the pinned 21.0 build returned a full report with
 `The class cs.AbsentComponent is unknown.` at physical line 2. The declared
-dependency still blocked completeness with
+dependency still blocked completeness with the then-current message
 `Declared 4D dependencies are not validated by this foundation`; the run
 retained that partial finding, exited `2` and produced no Sonar report.
 An unresolved-class diagnostic is not evidence that dependency installation
