@@ -1,1 +1,1 @@
-{"exclude":["tests/fixtures/github/*","tests/fixtures/rules/*","tests/fixtures/native/*","tests/fixtures/missing-dependency/*"]}
+{"exclude":["tests/fixtures/github/*","tests/fixtures/rules/*","tests/fixtures/native/*","tests/fixtures/missing-dependency/*","tests/fixtures/github-dependencies/*"]}

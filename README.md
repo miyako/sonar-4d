@@ -12,7 +12,7 @@ This is **not a complete compiler analyzer or a security product**.
 | GitHub code scanning | Reusable action, opt-in public tool4d download, and live-verified custom/native hosted workflows |
 | Sonar generic JSON | Current rules/issues format; correct CODE_SMELL/MAINTAINABILITY and BUG/RELIABILITY mappings |
 | Native SonarQube Java plugin | Registers `fourd` / `.4dm`; built and unit/packaging tested, not server-deployment tested |
-| tool4d backend | Response-bound workspace syntax checking on verified tool4d 21.0 builds 21.100301 and 21.100422, macOS ARM64; other builds/dependencies fail closed |
+| tool4d backend | Response-bound workspace syntax checking on verified tool4d 21.0 builds 21.100301 and 21.100422, macOS ARM64; GitHub release dependencies installed into the analysis copy; other builds and unresolved dependencies fail closed |
 
 ## Run the working analyzer
 
@@ -97,7 +97,8 @@ Native completion and location mapping are verified for **21.0 builds
 21.100301 and 21.100422 on macOS ARM64 only**. Other builds/platforms may be observed, but remain incomplete and
 their raw diagnostics are not promoted to common findings.
 Public Linux/Windows downloads also exist, but those native backends are not
-verified here. Project dependency fetching is not implemented.
+verified here. Declared GitHub dependencies are installed as described in
+[Component dependencies](#component-dependencies).
 Repeated native launches exposed an intermittent **SIGSEGV in tool4d
 21.0 build 21.100301's own `--version` command** on this host. That is a real runtime failure,
 not a clean scan: it exits `2`, preserves the error and withholds Sonar output.
@@ -131,7 +132,7 @@ The project path is relative to the selected root. The CLI normally sends
 The official client's `experimental/checkSyntax` operation provides the
 batch response. A native run is complete only when that response contains a
 valid **full document report for every selected source file**, on the verified
-build, with no unvalidated declared/component/plugin dependencies. A quiet
+build, with every declared dependency installed and no unvalidated plugin dependencies. A quiet
 period, component-ready notification, per-document response, or null result
 never establishes completion. Missing files, malformed ranges, unsupported
 builds, dependency uncertainty and timeouts exit `2` and withhold Sonar output.
@@ -159,7 +160,8 @@ tool4d process. **These flags and a copy are not a security sandbox.** Native
 plugins/components, OS preferences and the process environment remain risks.
 Use trusted projects and dependencies; analyze untrusted projects only in an
 OS-isolated disposable account/container/VM without credentials or network
-access. The analyzer itself has no upload or dependency-download path.
+access. The analyzer has no upload path. Native runs download declared GitHub
+dependency releases unless `--no-dependencies` or `--offline-dependencies` is set.
 The separate optional provisioner retrieves only the public pinned runtime;
 it does not transmit project source. Protect reports as source-derived data.
 
@@ -266,6 +268,7 @@ mvn --batch-mode --no-transfer-progress -f sonar-plugin/pom.xml clean verify
 Contracts cover thresholds/configuration, positive and negative fixtures,
 determinism, classification, UTF-16/URI locations, empty ranges, TCP framing,
 timeouts, process failure, old/missing tool4d, dependency-fetch refusal,
+dependency installation, blockers and token isolation,
 invalid/null diagnostic responses, incomplete exports and read-only input.
 The opt-in integration tests exercise actual initialization, isolation,
 cross-file/unopened diagnostics, source locations and clean response coverage.
@@ -274,12 +277,45 @@ empty/nonempty variants have also been validated against the published
 SARIF 2.1.0 JSON schema. CI runs Python contracts and Java verification without
 requiring tool4d. The separate hosted-native workflow downloads the public
 runtime without credentials and checks errors, a genuinely clean response,
-and fail-closed missing-dependency behavior.
+fail-closed missing-dependency behavior, and GitHub dependency installation
+with an offline re-run from verified archives.
+
+## Component dependencies
+
+When a native project declares dependencies in `Project/Sources/dependencies.json`,
+sonar-4d runs the 4D dependency-manager emulation from
+[miyako/4D](https://github.com/miyako/4D/tree/main/.github/actions/dependencies),
+pinned to a reviewed commit and verified by SHA-256 before every use. The script
+resolves GitHub version anchors and tags like 4D does, downloads release archives
+into a verified per-user archive store, and extracts them under a temporary home.
+sonar-4d then copies each resolved component into the **analysis copy's**
+`Components/<name>.4dbase`. The analyzed repository is never modified.
+
+tool4d 21.0 in language-server mode does not load the dependency cache, but it
+does load `Components/`, so components are installed there. A component
+already present in the project's `Components` folder keeps precedence, as in 4D.
+Local (`path`) and GitLab dependencies, unresolved versions and failed downloads
+make the analysis incomplete (exit `2`).
+
+| Option | Behavior |
+|--------|----------|
+| default | Resolve and download; reuse archives whose SHA-256 still matches |
+| `--offline-dependencies` | No network; tags from the project's last lock, verified stored archives only |
+| `--no-dependencies` | Install nothing; any declared dependency makes the run incomplete |
+
+As in 4D, the lock file pins resolved tags. Each analysis uses a fresh copy, so
+sonar-4d keeps the last complete lock per analyzed project in its user cache
+(`~/Library/Caches/sonar-4d/locks` on macOS). Delete it to pick up newer tags.
+
+Set `SONAR4D_GITHUB_TOKEN` for private repositories or rate limits. It is
+passed only to the dependency script and never written to reports. In the
+action, use the `dependencies` (`install`, `offline` or `none`) and
+`github-token` inputs.
 
 ## Scope and next direction
 
 The next substantive gap is exercising the packaged plugin and reports against
-a pinned SonarQube server/scanner. Native dependency validation, richer
+a pinned SonarQube server/scanner. GitLab and local dependencies, richer
 fixtures and R3 coordinate correctness are additional bounded follow-ups.
 A future native
 sensor/rule repository would be a separate feature, not a rename of external

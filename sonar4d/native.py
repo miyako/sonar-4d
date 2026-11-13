@@ -16,6 +16,7 @@ import tempfile
 import time
 from urllib.parse import unquote, urlsplit
 
+from . import dependencies
 from .model import native_findings
 
 
@@ -88,7 +89,7 @@ def _copy_workspace(root: Path, destination: Path) -> None:
 
 def probe(
     root: Path, project: Path, tool: Path, opened: list[Path], seconds: float,
-    scope: list[Path] | None = None,
+    scope: list[Path] | None = None, dependency_options: dict | None = None,
 ) -> dict:
     """Use a full custom workspace response, never silence, to establish coverage."""
     result = {
@@ -103,6 +104,7 @@ def probe(
         "syntaxResponse": None,
         "databaseResponse": None,
         "filesStatusResponse": None,
+        "dependencies": None,
     }
     if not math.isfinite(seconds) or seconds <= 0 or seconds > 300:
         raise NativeError("Native timeout must be greater than 0 and at most 300 seconds")
@@ -116,17 +118,12 @@ def probe(
         ]
         expected = {source.relative_to(root).as_posix() for source in selected_sources}
         dependency_blocker = None
-        dependencies = project.parent / "Sources/dependencies.json"
-        if dependencies.is_file():
-            manifest = json.loads(dependencies.read_text(encoding="utf-8-sig"))
-            if not isinstance(manifest, dict) or not isinstance(manifest.get("dependencies", {}), dict):
-                raise NativeError("Invalid 4D dependencies.json")
-            if manifest.get("dependencies"):
-                dependency_blocker = "Declared 4D dependencies are not validated by this foundation"
-        for folder in ("Components", "Plugins"):
-            directory = project.parent.parent / folder
-            if directory.is_dir() and any(directory.iterdir()):
-                dependency_blocker = f"Native {folder} dependencies are not validated by this foundation"
+        declared = dependencies.declared(project)
+        if declared and dependency_options is None:
+            dependency_blocker = "Declared 4D dependencies are not validated by this foundation"
+        plugins = project.parent.parent / "Plugins"
+        if plugins.is_dir() and any(plugins.iterdir()):
+            dependency_blocker = "Native Plugins dependencies are not validated by this foundation"
         version = subprocess.run(
             [str(tool), "--version"], capture_output=True, text=True, timeout=min(seconds, 10),
             check=True,
@@ -139,6 +136,13 @@ def probe(
             temporary = Path(directory).resolve()
             workspace = temporary / "workspace"
             _copy_workspace(root, workspace)
+            if declared and dependency_options is not None:
+                summary, blocker = dependencies.install(
+                    (workspace / project_relative).parent.parent, version, temporary,
+                    lock_key=str(project), **dependency_options,
+                )
+                result["dependencies"] = summary
+                dependency_blocker = dependency_blocker or blocker
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
                 listener.bind(("127.0.0.1", 0))
                 listener.listen(1)
@@ -378,6 +382,7 @@ def probe(
         result["reason"] = (
             "Observation deadline reached before a complete workspace syntax response"
         )
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, NativeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, NativeError,
+            dependencies.DependencyError) as error:
         result["reason"] = f"{type(error).__name__}: {error}"
     return result
