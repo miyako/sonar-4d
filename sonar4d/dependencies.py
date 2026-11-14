@@ -20,8 +20,8 @@ import tempfile
 import urllib.request
 
 
-SCRIPT_COMMIT = "d4e4d1dace230fee319c5c3af81c90a1641c7b24"
-SCRIPT_SHA256 = "a6420b01603237a0d82e8260a3dca695887150fb72922322d0a7b2c3239f5c56"
+SCRIPT_COMMIT = "6ab718ea695ef043f568552a685d53eff8d3226c"
+SCRIPT_SHA256 = "67b5c178a8c004f50d22a5d51b0514c983e2a02f76f2d0b6f7b3ba597246fb0a"
 SCRIPT_URL = (
     f"https://raw.githubusercontent.com/miyako/4D/{SCRIPT_COMMIT}"
     "/.github/actions/dependencies/fetch_dependencies.py"
@@ -45,6 +45,29 @@ def declared(project: Path) -> bool:
     if not isinstance(manifest, dict) or not isinstance(manifest.get("dependencies", {}), dict):
         raise DependencyError("Invalid 4D dependencies.json")
     return bool(manifest.get("dependencies"))
+
+
+def carry_environment(package: Path, root: Path, workspace: Path) -> str | None:
+    """Make the analysis copy use the environment4d.json that 4D would use for `package`.
+
+    4D reads environment4d.json from the package folder or the nearest parent folder. A file at or below
+    `root` is part of the copy already. A nearest file above `root` is copied to the copy's root (`workspace`);
+    otherwise an empty one is written there, so the emulator never reaches an unrelated file above the
+    temporary folder. Returns a warning when an outside file is applied.
+    """
+    target = workspace / "environment4d.json"
+    if target.exists():
+        return None
+    for folder in [package, *package.parents]:
+        candidate = folder / "environment4d.json"
+        if candidate.is_file():
+            if folder.is_relative_to(root):
+                return None
+            shutil.copyfile(candidate, target)
+            return ("environment4d.json above the analysis root was applied to the analysis copy; "
+                    "its relative paths resolve from the analysis root")
+    target.write_text('{"dependencies": {}}\n', encoding="utf-8")
+    return None
 
 
 def cache_directory() -> Path:

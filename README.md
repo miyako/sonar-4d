@@ -297,6 +297,13 @@ already present in the project's `Components` folder keeps precedence, as in 4D.
 Local (`path`) and GitLab dependencies, unresolved versions and failed downloads
 make the analysis incomplete (exit `2`).
 
+Like 4D, the emulation applies the `environment4d.json` in the package folder or
+the nearest parent folder, and only to names that `dependencies.json` declares.
+If that file is above the analysis root, sonar-4d copies it to the root of the
+analysis copy and adds a warning; relative paths in it then resolve from the
+analysis root. Without one, an empty `environment4d.json` is placed there so
+that no file above the temporary folder is picked up.
+
 | Option | Behavior |
 |--------|----------|
 | default | Resolve and download; reuse archives whose SHA-256 still matches |

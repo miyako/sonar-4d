@@ -137,10 +137,13 @@ def probe(
             workspace = temporary / "workspace"
             _copy_workspace(root, workspace)
             if declared and dependency_options is not None:
+                environment_warning = dependencies.carry_environment(project.parent.parent, root, workspace)
                 summary, blocker = dependencies.install(
                     (workspace / project_relative).parent.parent, version, temporary,
                     lock_key=str(project), **dependency_options,
                 )
+                if environment_warning:
+                    summary.setdefault("warnings", []).insert(0, environment_warning)
                 result["dependencies"] = summary
                 dependency_blocker = dependency_blocker or blocker
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:

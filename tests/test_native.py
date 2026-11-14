@@ -223,6 +223,49 @@ class NativeContractTests(unittest.TestCase):
         self.assertFalse(result["complete"])
         self.assertIn("L: local dependencies", result["reason"])
 
+    def test_probe_applies_the_environment_4d_would_use(self):
+        # 4D uses environment4d.json in the package folder or the nearest parent folder. The analysis copy must
+        # see the same file: one above the analysis root is not copied with the workspace, and the emulator
+        # must not pick up an unrelated file above the temporary folder.
+        sources = self.root / "Project/Sources"
+        sources.mkdir()
+        (sources / "dependencies.json").write_text('{"dependencies":{"A":{"github":"o/A"}}}')
+        script, log = self.fake_dependencies({"incomplete": [], "dependencies": {}})
+        above = self.directory / "environment4d.json"
+        inside = self.root / "environment4d.json"
+        override = '{"dependencies":{"A":{"github":"o/A","tag":"1.0.0"}}}'
+
+        def run():
+            with patch.dict(os.environ, {"SONAR4D_FAKE_MODE": "workspace-full",
+                                         "SONAR4D_FAKE_VERSION": "21.0 contract-test"}):
+                result = probe(self.root, self.project, self.tool, [self.source], 2,
+                               dependency_options={"script": script})
+            self.assertTrue(result["complete"], result["reason"])
+            invocation = json.loads(log.read_text())
+            copy = Path(invocation["argv"][invocation["argv"].index("--project") + 1])
+            self.assertIsNotNone(invocation["environment"])
+            self.assertTrue(Path(invocation["environment"]).is_relative_to(copy.parent),
+                            "the emulator looked above the temporary folder")
+            return result, invocation
+
+        above.write_text(override)
+        result, invocation = run()
+        self.assertEqual(invocation["environmentText"], override)
+        self.assertIn("environment4d.json above the analysis root", " ".join(result["dependencies"]["warnings"]))
+        self.assertFalse(inside.exists())
+
+        inside.write_text('{"dependencies":{}}')
+        result, invocation = run()
+        self.assertEqual(invocation["environmentText"], '{"dependencies":{}}')
+        self.assertEqual(result["dependencies"]["warnings"], [])
+
+        inside.unlink()
+        above.unlink()
+        result, invocation = run()
+        self.assertEqual(json.loads(invocation["environmentText"]), {"dependencies": {}})
+        self.assertEqual(result["dependencies"]["warnings"], [])
+        self.assertFalse(inside.exists())
+
     def test_failure_modes(self):
         for mode, reason in (("exit", "exited"), ("no-connect", "deadline"),
                              ("initialize-error", "initialize failed"), ("malformed", "Malformed"),
